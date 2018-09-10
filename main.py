@@ -8,6 +8,14 @@ import warnings
 from distutils.version import LooseVersion
 import project_tests as tests
 
+# Hyper parameters
+KEEP_PROB = 0.75 # Dropout probability to keep a neuron alive
+LEARN_RATE = 0.001 # learning rate for training
+REG_SCALE = 0.0001 # A contant multiplier for regularization losses
+WT_STDDEV = 0.001 # Standard deviation for weight initializer
+BATCH_SIZE = 8 # Number of images in a batch for training
+EPOCHS = 25 # number of epochs to train network
+NUM_BATCHES_PER_EPOCH = 10000  # number of batches to process per epoch, helps debugging to run shorter epoch
 
 # Check TensorFlow Version
 assert LooseVersion(tf.__version__) >= LooseVersion('1.0'), 'Please use TensorFlow version 1.0 or newer.  You are using {}'.format(tf.__version__)
@@ -62,26 +70,41 @@ def layers(vgg_layer3_out, vgg_layer4_out, vgg_layer7_out, num_classes):
 
     # Perform 1x1 convolution of Vgg output layers and bring down channels to num_classes
     conv_1x1_l7 = tf.layers.conv2d(vgg_layer7_out, num_classes, kernel_size=1, padding='same', \
-                                   kernel_regularizer=tf.contrib.layers.l2_regularizer(1e-3))
+                                   kernel_regularizer=tf.contrib.layers.l2_regularizer(REG_SCALE), \
+                                   kernel_initializer=tf.truncated_normal_initializer(stddev=WT_STDDEV),
+                                   name="conv_1x1_l7")
+
     conv_1x1_l4 = tf.layers.conv2d(vgg_layer4_out, num_classes, kernel_size=1, padding='same', \
-                                   kernel_regularizer=tf.contrib.layers.l2_regularizer(1e-3))
+                                   kernel_regularizer=tf.contrib.layers.l2_regularizer(REG_SCALE), \
+                                   kernel_initializer=tf.truncated_normal_initializer(stddev=WT_STDDEV),
+                                   name="conv_1x1_l4")
+
     conv_1x1_l3 = tf.layers.conv2d(vgg_layer3_out, num_classes, kernel_size=1, padding='same', \
-                                   kernel_regularizer=tf.contrib.layers.l2_regularizer(1e-3))
+                                   kernel_regularizer=tf.contrib.layers.l2_regularizer(REG_SCALE), \
+                                   kernel_initializer=tf.truncated_normal_initializer(stddev=WT_STDDEV),
+                                   name="conv_1x1_l3")
 
     # Perform upsampling by transpose convolution and adding skip connections from previous vgg pooling layers
-    output = tf.layers.conv2d_transpose(conv_1x1_l7, num_classes, kernel_size=4, strides=(2, 2), padding='same', \
-                                        kernel_regularizer=tf.contrib.layers.l2_regularizer(1e-3))
-    output = tf.add(output, conv_1x1_l4)
-    output = tf.layers.conv2d_transpose(output, num_classes, kernel_size=4, strides=(2, 2), padding='same', \
-                                        kernel_regularizer=tf.contrib.layers.l2_regularizer(1e-3))
-    output = tf.add(output, conv_1x1_l3)
-    output = tf.layers.conv2d_transpose(output, num_classes, kernel_size=16, strides=(8, 8), padding='same', \
-                                        kernel_regularizer=tf.contrib.layers.l2_regularizer(1e-3))
+    decoder_l8 = tf.layers.conv2d_transpose(conv_1x1_l7, num_classes, kernel_size=4, strides=(2, 2), padding='same', \
+                                            kernel_regularizer=tf.contrib.layers.l2_regularizer(REG_SCALE), \
+                                            kernel_initializer=tf.truncated_normal_initializer(stddev=WT_STDDEV), \
+                                            name="decoder_l8")
 
-    return output
+    skip_l4_l8 = tf.add(decoder_l8, conv_1x1_l4, name="skip_l4_l8")
+    decoder_l9 = tf.layers.conv2d_transpose(skip_l4_l8, num_classes, kernel_size=4, strides=(2, 2), padding='same', \
+                                            kernel_regularizer=tf.contrib.layers.l2_regularizer(REG_SCALE), \
+                                            kernel_initializer=tf.truncated_normal_initializer(stddev=WT_STDDEV),
+                                            name="decoder_l9")
+
+    skip_l3_l9 = tf.add(decoder_l9, conv_1x1_l3, name="skip_l3_l9")
+    decoder_l10 = tf.layers.conv2d_transpose(skip_l3_l9, num_classes, kernel_size=16, strides=(8, 8), padding='same', \
+                                             kernel_regularizer=tf.contrib.layers.l2_regularizer(REG_SCALE), \
+                                             kernel_initializer=tf.truncated_normal_initializer(stddev=WT_STDDEV),
+                                             name="decoder_l10")
+
+    return decoder_l10
 
 tests.test_layers(layers)
-
 
 def optimize(nn_last_layer, correct_label, learning_rate, num_classes):
     """
@@ -98,19 +121,17 @@ def optimize(nn_last_layer, correct_label, learning_rate, num_classes):
 
     cross_entropy = tf.nn.softmax_cross_entropy_with_logits_v2(labels=labels, logits=logits)
     loss_operation = tf.reduce_mean(cross_entropy)
-    optimizer = tf.train.AdamOptimizer(learning_rate)
-    training_operation = optimizer.minimize(loss_operation)
 
-    return logits, training_operation, loss_operation
+    # Add loss due to regularization to loss function
+    reg_losses = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
+    loss = loss_operation + REG_SCALE * sum(reg_losses)
+
+    optimizer = tf.train.AdamOptimizer(learning_rate)
+    training_operation = optimizer.minimize(loss)
+
+    return logits, training_operation, loss
 
 tests.test_optimize(optimize)
-
-# Hyper parameters
-KEEP_PROB = 0.75
-LEARN_RATE = 0.001
-
-# number of batches to process per epoch, helps debugging to run shorter epoch
-NUM_BATCHES_PER_EPOCH = 50
 
 def train_nn(sess, epochs, batch_size, get_batches_fn, train_op, cross_entropy_loss, input_image,
              correct_label, keep_prob, learning_rate):
@@ -130,7 +151,7 @@ def train_nn(sess, epochs, batch_size, get_batches_fn, train_op, cross_entropy_l
     # TODO: Implement function
     for e in range(epochs):
         start_ts = time.time()
-        print("Starting Epoch: {}, at: {}".format(e+1, start_ts))
+        print("Starting Epoch: {}/{}, at: {}".format(e+1, EPOCHS, start_ts))
         print("=========================================")
         batch_loss = []
         num_batch = 0
@@ -151,9 +172,6 @@ def train_nn(sess, epochs, batch_size, get_batches_fn, train_op, cross_entropy_l
         print()
 
 tests.test_train_nn(train_nn)
-
-BATCH_SIZE = 20
-EPOCHS = 100
 
 def run():
     num_classes = 2
@@ -193,12 +211,15 @@ def run():
         train_nn(sess, EPOCHS, BATCH_SIZE, get_batches_fn, train_op, loss_op, input_image, \
                  correct_label, keep_prob, learning_rate)
 
+        print("Finished training, saving the trained model")
+        saver = tf.train.Saver()
+        saver.save(sess, save_path="./model")
+
         # TODO: Save inference data using helper.save_inference_samples
         #  helper.save_inference_samples(runs_dir, data_dir, sess, image_shape, logits, keep_prob, input_image)
         helper.save_inference_samples(runs_dir, data_dir, sess, image_shape, logits, keep_prob, input_image)
 
         # OPTIONAL: Apply the trained model to a video
-
 
 if __name__ == '__main__':
     run()
