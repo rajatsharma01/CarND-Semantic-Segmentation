@@ -66,4 +66,4 @@ At the end of 25th epoch, model achieves training mean loss of 0.0415. Output of
 
 Following gif is created from ouput on test images in runs directory containing inference output.
 
-![Inference](./runs/1536425845.7430353/run.gif)
+![Inference](./runs/1536540499.7430353/run.gif)
