@@ -46,3 +46,21 @@ If you are unfamiliar with GitHub , Udacity has a brief [GitHub tutorial](http:/
 To learn about REAMDE files and Markdown, Udacity provides a free [course on READMEs](https://www.udacity.com/courses/ud777), as well. 
 
 GitHub also provides a [tutorial](https://guides.github.com/features/mastering-markdown/) about creating Markdown files.
+
+### Reflection
+I ended up implementing simple FCN model as suggested in walkthrough video. I have trained this model on my laptop without any GPU. I tain the model with following parameters
+
+```
+KEEP_PROB = 0.75
+LEARN_RATE = 0.001
+KEEP_PROB = 0.75
+LEARN_RATE = 0.001
+```
+
+At the end of 100th epoch, model achieves training mean loss of 0.039, which could more than 25 hours to finish! Output of the prgram is captured in `logs.txt`. Following plot shows training loss over 100 epochs, skipping the first epoch though as mean loss of first eoch was a high value of 28 and including that would show up a flat line for rest of the epoch.
+
+![Mean Loss Per Epoch](./loss_plot.png)
+
+Following gif is created from ouput on test images in runs directory containing inference output.
+
+![Inference](./runs/1536425845.796704/run.gif)
